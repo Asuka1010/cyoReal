@@ -1,23 +1,55 @@
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# Firebase の秘密鍵をロード
+cred = credentials.Certificate("serviceAccountKey.json")
+if not firebase_admin._apps:
+    cred = credentials.Certificate("serviceAccountKey.json")  
+    firebase_admin.initialize_app(cred)
+
+# Firestore クライアント
+db = firestore.client()
+
+# サンプルデータを書き込む
+doc_ref.set({
+    "timestamp": firestore.SERVER_TIMESTAMP,
+    "heart_rate": 72,
+    "user": "Asuka"
+})
+
+
 import asyncio
 import threading
 import numpy as np
 from flask import Flask
 from flask_socketio import SocketIO
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 
 # Flask App (Backend Only)
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")  # Allow cross-origin requests
 
-# Polar H10 Configuration
-POLAR_H10_ADDRESS = "F79FD746-804F-5E8F-FA33-28A9EC051003"
+# UUID for Heart Rate Service
 HEART_RATE_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
 # Data storage for correlation
 real_hr_data = []
 simulated_hr_data = []
 
-# Function to handle incoming heart rate data
+async def scan_for_polar():
+    """Scan for Bluetooth devices and return the address of a Polar H9/H10."""
+    print("🔍 Scanning for Polar H9/H10 devices...")
+
+    devices = await BleakScanner.discover()
+    
+    for device in devices:
+        if device.name and ("Polar H10" in device.name or "Polar H9" in device.name):
+            print(f"✅ Found {device.name}: {device.address}")
+            return device.address  # Return first matching device found
+
+    print("❌ No Polar H9/H10 devices found. Ensure Bluetooth is on and device is nearby.")
+    return None  # No device found
+
 async def hr_callback(sender, data):
     """Process incoming heart rate data and calculate correlation."""
     flags = data[0]
@@ -47,10 +79,14 @@ async def hr_callback(sender, data):
         "correlation": round(correlation, 2)
     })
 
-# Function to connect to Polar H10
 async def connect_polar():
-    async with BleakClient(POLAR_H10_ADDRESS) as client:
-        print("✅ Connected to Polar H10!")
+    """Scan for Polar H9/H10 and connect to it."""
+    polar_address = await scan_for_polar()  # Find the device automatically
+    if not polar_address:
+        return  # No device found, exit function
+
+    async with BleakClient(polar_address) as client:
+        print(f"✅ Connected to {polar_address}!")
 
         try:
             await client.start_notify(HEART_RATE_UUID, hr_callback)
@@ -71,7 +107,7 @@ def run_asyncio():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(connect_polar())
 
-# Start Polar H10 connection in a background thread
+# Start Polar connection in a background thread
 threading.Thread(target=run_asyncio, daemon=True).start()
 
 # Start Flask Server
