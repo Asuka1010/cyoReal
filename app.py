@@ -11,12 +11,14 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 # サンプルデータを書き込む
+doc_ref = db.collection("heart_rate_data").document("test_device")
 doc_ref.set({
     "timestamp": firestore.SERVER_TIMESTAMP,
     "heart_rate": 72,
     "user": "Asuka"
 })
 
+print("✅ Firestore にデータを書き込みました！")
 
 import asyncio
 import threading
