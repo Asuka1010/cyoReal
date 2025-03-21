@@ -7,10 +7,10 @@ import threading
 import datetime
 
 # ✅ 自分用のIDを設定（"user_1" or "user_2"）
-DEVICE_ID = "user_1"  # ← これをペアの人と区別するように変更！
+DEVICE_ID = "###"  # ← これをペアの人と区別するように変更！
 
 # ✅ Firestore 初期化
-cred = credentials.Certificate("serviceAccountKey.json")  # 各自の秘密鍵パス
+cred = credentials.Certificate("###")  # 各自の秘密鍵パス
 if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 db = firestore.client()
