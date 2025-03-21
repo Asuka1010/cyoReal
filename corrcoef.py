@@ -1,45 +1,60 @@
-#corrcoef.py
+import asyncio
+from bleak import BleakClient, BleakScanner
+import threading
+import datetime
+import json
+import requests
 
-import firebase_admin
-from firebase_admin import credentials, firestore
-import numpy as np
-import functions_framework  # Google Cloud Functions 用
+# 🔧 あなたのCloud FunctionのURLをここに貼る
+CLOUD_FUNCTION_URL = "https://us-central1-<your-project-id>.cloudfunctions.net/submitHeartRate"
 
-# Firestore 初期化
-cred = credentials.ApplicationDefault()
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+# ✅ 自分のID（デバイス名やニックネームでもOK）
+DEVICE_ID = "yuto_device"
 
-@functions_framework.http
-def compute_correlation(request):
+# ✅ BluetoothのUUID（Polar H10/H9共通）
+HEART_RATE_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+
+# ✅ Polarデバイスを自動検出
+async def find_polar_device():
+    print("🔍 Searching for Polar H9/H10...")
+    devices = await BleakScanner.discover()
+    for device in devices:
+        if device.name and ("Polar H10" in device.name or "Polar H9" in device.name):
+            print(f"✅ Found {device.name}: {device.address}")
+            return device.address
+    print("❌ No Polar H10/H9 found.")
+    return None
+
+# ✅ 心拍数データをCloud FunctionにPOST送信
+async def hr_callback(sender, data):
+    flags = data[0]
+    heart_rate = data[1] if (flags & 0x01) == 0 else int.from_bytes(data[1:3], byteorder="little", signed=False)
+    print(f"📡 {DEVICE_ID} HR: {heart_rate} bpm")
+
+    payload = {
+        "user": DEVICE_ID,
+        "heart_rate": heart_rate
+    }
+
     try:
-        # 最新の心拍数データをそれぞれ取得
-        user1_docs = db.collection("heart_rate_user1").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(30).stream()
-        user2_docs = db.collection("heart_rate_user2").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(30).stream()
-
-        user1_hr = [doc.to_dict()["heart_rate"] for doc in user1_docs]
-        user2_hr = [doc.to_dict()["heart_rate"] for doc in user2_docs]
-
-        # データが足りない場合は処理しない
-        if len(user1_hr) < 5 or len(user2_hr) < 5:
-            return "Not enough data", 200
-
-        # 配列の長さを揃える（短い方に合わせる）
-        min_len = min(len(user1_hr), len(user2_hr))
-        user1_hr = user1_hr[:min_len][::-1]  # 最新→古いを古い→最新に
-        user2_hr = user2_hr[:min_len][::-1]
-
-        correlation = float(np.corrcoef(user1_hr, user2_hr)[0, 1])
-
-        # Firestore に保存
-        db.collection("correlation_results").add({
-            "correlation": correlation,
-            "user1_last": user1_hr[-1],
-            "user2_last": user2_hr[-1],
-            "timestamp": firestore.SERVER_TIMESTAMP
-        })
-
-        return f"✅ Correlation: {correlation}", 200
-
+        response = requests.post(CLOUD_FUNCTION_URL, json=payload)
+        if response.status_code != 200:
+            print("⚠️ Failed to send data:", response.text)
     except Exception as e:
-        return f"❌ Error: {str(e)}", 500
+        print("❌ Network error:", e)
+
+# ✅ Polarに接続して心拍数を取得
+async def connect_polar():
+    address = await find_polar_device()
+    if not address:
+        return
+
+    async with BleakClient(address) as client:
+        print(f"✅ Connected to {address}")
+        await client.start_notify(HEART_RATE_UUID, hr_callback)
+        await asyncio.sleep(600)  # 10分間接続
+        await client.stop_notify(HEART_RATE_UUID)
+        print("✅ Stopped HR streaming.")
+
+# ✅ 実行（別スレッドで）
+threading.Thread(target=lambda: asyncio.run(connect_polar()), daemon=True).start()
